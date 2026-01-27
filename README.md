@@ -1,4 +1,4 @@
-# mymodel5: CIFAR-10構造駆動型分類器
+# mymodel2: CIFAR-10構造駆動型分類器
 
 > **CIFAR-10のための高度な離散数学的アプローチ**: D4二面体群対称性・局所二値パターン(LBP)・形態学的セルオートマトン・カラー統計を用いたCPU最適化実装
 
@@ -7,7 +7,7 @@
 
 ## 概要
 
-`mymodel5`は、**ニューラルネットワークやバックプロパゲーションに依存しない**CIFAR-10画像分類の実装です。[mymodel1](https://github.com/corcondor/mymodel1)（MNIST・96.36%）の進化版として、カラー自然画像に対応し、より高度な数学的構造を導入しています。
+`mymodel2`は、**ニューラルネットワークやバックプロパゲーションに依存しない**CIFAR-10画像分類の実装です。[mymodel1](https://github.com/corcondor/mymodel1)（MNIST・96.36%）の進化版として、カラー自然画像に対応し、より高度な数学的構造を導入しています。
 
 ### 何を使わないか（What this is NOT）
 
@@ -28,7 +28,7 @@
 
 ## mymodel1 との差別化
 
-| 項目 | [mymodel1](https://github.com/corcondor/mymodel1) (MNIST) | mymodel5 (CIFAR-10) |
+| 項目 | [mymodel1](https://github.com/corcondor/mymodel1) (MNIST) | mymodel2 (CIFAR-10) |
 |------|------|------|
 | **タスク** | 手書き数字（28×28グレースケール） | 自然画像（32×32カラー）|
 | **基本特徴** | raw/core/edge 二値マスク | **LBP** + **CA** + カラー統計 + 二次形式 |
@@ -53,7 +53,7 @@
 | **k=2 (二次)** | **Clifford回路、自由フェルミオン、LBP** | **O(n²) - efficient** ✅ |
 | k≥3 (高次) | 一般量子回路、3-SAT | Exp(n) - intractable ❌ |
 
-**mymodel5は二次で閉じることで、古典計算の理論的最適性を達成しています。**
+**mymodel2は二次で閉じることで、古典計算の理論的最適性を達成しています。**
 
 詳細は [THEORY.md](THEORY.md) を参照してください。
 
@@ -145,20 +145,20 @@ pip install lightgbm
 
 ```bash
 # デフォルト設定（平均化クリップ型パーセプトロン）
-python mymodel5.py
+python mymodel2.py
 
 # LightGBM使用（最高精度、推奨）
-python mymodel5.py --classifier lightgbm
+python mymodel2.py --classifier lightgbm
 
 # Diagonal LDA使用
-python mymodel5.py --classifier lda
+python mymodel2.py --classifier lda
 ```
 
 ### 推奨設定（高精度）
 
 ```bash
 # 論文推奨設定：flip拡張 + 対角スケーリング
-python mymodel5.py \
+python mymodel2.py \
   --classifier lightgbm \
   --flip_train \
   --flip_eval \
@@ -173,7 +173,7 @@ python mymodel5.py \
 
 ```bash
 # D4不変特徴（8x遅いが精度向上）
-python mymodel5.py \
+python mymodel2.py \
   --use_d4 \
   --d4_pooling mean \
   --classifier lightgbm
@@ -183,7 +183,7 @@ python mymodel5.py \
 
 ```bash
 # CA 2ステップ（形態学的進化）
-python mymodel5.py \
+python mymodel2.py \
   --ca_steps 2 \
   --ca_birth_min 5 \
   --ca_birth_max 8 \
@@ -319,7 +319,7 @@ Hardware: CPU only (no GPU)
 ### Example 1: 基本実行（パーセプトロン）
 
 ```bash
-python mymodel5.py --epochs 8
+python mymodel2.py --epochs 8
 ```
 
 **出力例**:
@@ -338,7 +338,7 @@ python mymodel5.py --epochs 8
 ### Example 2: LightGBM（推奨設定・最高精度）
 
 ```bash
-python mymodel5.py \
+python mymodel2.py \
   --classifier lightgbm \
   --flip_train \
   --flip_eval \
@@ -374,12 +374,12 @@ python mymodel5.py \
 
 ```bash
 # 学習＆保存
-python mymodel5.py \
+python mymodel2.py \
   --classifier lightgbm \
   --save_model models/cifar10_lgbm.pkl
 
 # 読み込み＆評価のみ
-python mymodel5.py \
+python mymodel2.py \
   --classifier lightgbm \
   --load_model models/cifar10_lgbm.pkl
 ```
@@ -390,7 +390,7 @@ python mymodel5.py \
 
 ```
 .
-├── mymodel5.py              # メイン実装（1075行）
+├── mymodel2.py              # メイン実装（1075行）
 ├── README.md                # このファイル
 ├── THEORY.md                # 詳細な理論的背景（Clifford回路との接続）
 ├── LICENSE                  # MITライセンス
@@ -456,7 +456,7 @@ where:
   c: 定数項
 ```
 
-mymodel5の特徴抽出（LBP、2×2パターン等）は、この二次形式の具体的実装と見なせます。
+mymodel2の特徴抽出（LBP、2×2パターン等）は、この二次形式の具体的実装と見なせます。
 
 ### 2. 計算複雑性の境界
 
@@ -510,36 +510,36 @@ mymodel5の特徴抽出（LBP、2×2パターン等）は、この二次形式�
 
 ```bash
 # キャッシュを有効活用（2回目以降は高速）
-python mymodel5.py --force_feat  # 初回のみ
+python mymodel2.py --force_feat  # 初回のみ
 
 # 並列化（実験的）
-python mymodel5.py --num_workers 4
+python mymodel2.py --num_workers 4
 
 # チャンクサイズ調整
-python mymodel5.py --chunk_feat 1024
+python mymodel2.py --chunk_feat 1024
 ```
 
 ### Q: メモリ不足
 
 ```bash
 # チャンクサイズを小さく
-python mymodel5.py --chunk_feat 256
+python mymodel2.py --chunk_feat 256
 
 # 特徴量を削減
-python mymodel5.py --no_markov --color_hist_bins 2
+python mymodel2.py --no_markov --color_hist_bins 2
 ```
 
 ### Q: 精度が低い
 
 ```bash
 # 推奨設定を使用
-python mymodel5.py \
+python mymodel2.py \
   --classifier lightgbm \
   --flip_train --flip_eval \
   --diag_scale --diag_use_var
 
 # LightGBMパラメータ調整
-python mymodel5.py \
+python mymodel2.py \
   --classifier lightgbm \
   --lgbm_n_estimators 2000 \
   --lgbm_max_depth 10
