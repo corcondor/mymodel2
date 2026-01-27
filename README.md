@@ -120,7 +120,7 @@ d4_group_transforms(img) → [img_e, img_r90, img_r180, img_r270,
 - **2×2パターンヒストグラム**: 16パターン
 - **マルコフ遷移**: 4方向の遷移確率（オプション）
 
-**特徴量次元**: 通常15,000-25,000次元（設定により変動）
+**特徴量次元**: デフォルト設定で約3,900次元（CA有効化で増加）
 
 ---
 
@@ -209,7 +209,7 @@ python mymodel5.py \
 
 | オプション | 説明 | デフォルト |
 |-----------|------|-----------|
-| `--lgbm_n_estimators` | ツリーの数 | 1000 |
+| `--lgbm_n_estimators` | ツリーの数（**精度に大きく影響**） | 1000 |
 | `--lgbm_max_depth` | 最大深度 | 8 |
 | `--lgbm_num_leaves` | 最大葉数 | 256 |
 | `--lgbm_learning_rate` | 学習率 | 0.05 |
@@ -290,9 +290,9 @@ python mymodel5.py \
 ```
 Dataset: CIFAR-10
 Method: LightGBM + flip augmentation + diagonal scaling
-Accuracy: ~74-75%
-Training time: ~5-10分（特徴抽出含む、CPU）
-Feature dimension: ~15,000-25,000（設定による）
+Accuracy: ~76-77% (n_estimators=1000-10000)
+Training time: ~20-60分（特徴抽出含む、CPU）
+Feature dimension: 3,872 (default settings)
 Hardware: CPU only (no GPU)
 ```
 
@@ -302,9 +302,9 @@ Hardware: CPU only (no GPU)
 |------|------|------|
 | Perceptron (baseline) | ~70% | 整数演算のみ、最速 |
 | Perceptron + flip | ~72% | 反転拡張 |
-| LightGBM (baseline) | ~73% | 勾配ブースティング |
-| **LightGBM + flip + scaling** | **~74-75%** | **推奨設定** |
-| LightGBM + D4 | ~75-76% | 8x遅い、最高精度 |
+| LightGBM (n_estimators=100) | ~67-68% | 基本設定 |
+| LightGBM (n_estimators=1000) | ~76% | 推奨設定 |
+| **LightGBM + flip + scaling (n_est=1000-10000)** | **~76-77%** | **最高精度** ✅ |
 | DiagLDA | ~68-70% | 生成モデル、高速 |
 | | | |
 | ResNet-18 (参考) | ~95% | GPU、ニューラルネット |
@@ -325,30 +325,49 @@ python mymodel5.py --epochs 8
 **出力例**:
 
 ```
-[data] loaded: train=(50000, 32, 32, 3) test=(10000, 32, 32, 3)
-[feat] build train: N=50000 D=15234 -> cache/train_xxx.mmap
+[cfg] featurizer dim = 3872  masks = 31  per-mask-dim = 113
+[data] loaded: train=(50000, 32, 32, 3) test=(10000, 32, 32, 3) time=2.53s
+[feat] build train: N=50000 D=3872 -> feat_cache\train_xxx.mmap chunk=512 workers=1
+  train: 50000/50000 (525.9s)
+[feat] done train: time=527.4s
 [epoch 1/8] test_acc=65.23%
 [epoch 8/8] test_acc=69.87%
 [done] final_test_acc=70.12%
 ```
 
-### Example 2: LightGBM（推奨）
+### Example 2: LightGBM（推奨設定・最高精度）
 
 ```bash
 python mymodel5.py \
   --classifier lightgbm \
   --flip_train \
   --flip_eval \
+  --diag_scale \
+  --diag_use_var \
+  --diag_eps 10 \
+  --diag_scale_factor 32 \
   --lgbm_n_estimators 1000
 ```
 
 **出力例**:
 
 ```
-[lightgbm] using flip augmentation for training
-[lightgbm] training done in 45.3s
+[cfg] featurizer dim = 3872  masks = 31  per-mask-dim = 113
+[data] loaded: train=(50000, 32, 32, 3) test=(10000, 32, 32, 3) time=0.36s
+[feat] load train from cache: feat_cache\train_xxx.mmap shape=[50000, 3872]
+[feat] load test from cache: feat_cache\test_xxx.mmap shape=[10000, 3872]
+[feat] load trainflip from cache: feat_cache\trainflip_xxx.mmap shape=[50000, 3872]
+[feat] load testflip from cache: feat_cache\testflip_xxx.mmap shape=[10000, 3872]
+[diag] fit invstd (use_var=True, eps=10.0) time=2.06s
+[diag] wrote scaled feats: feat_cache\train_xxx_diag1_eps10_s32.mmap time=1.85s
+[diag] wrote scaled feats: feat_cache\test_xxx_diag1_eps10_s32.mmap time=0.38s
+[diag] wrote scaled feats: feat_cache\trainflip_xxx_diag1_eps10_s32.mmap time=2.06s
+[diag] wrote scaled feats: feat_cache\testflip_xxx_diag1_eps10_s32.mmap time=0.40s
+[lightgbm] n_estimators=1000 max_depth=8 num_leaves=256 lr=0.05
+[lightgbm] using flip augmentation for training (concatenating train + trainflip)
+[lightgbm] training done in 3460.8s
 [lightgbm] using flip ensemble for evaluation
-[done] final_test_acc=74.56%
+[done] final_test_acc=76.73%
 ```
 
 ### Example 3: モデル保存・読み込み
@@ -377,9 +396,12 @@ python mymodel5.py \
 ├── LICENSE                  # MITライセンス
 ├── cifar10_data/            # データセット（自動ダウンロード）
 │   └── cifar-10-batches-py/
-├── cache/                   # 特徴量キャッシュ（自動生成）
+├── feat_cache/              # 特徴量キャッシュ（自動生成）
 │   ├── train_xxx.mmap
 │   ├── test_xxx.mmap
+│   ├── trainflip_xxx.mmap
+│   ├── testflip_xxx.mmap
+│   ├── *_diag1_eps10_s32.mmap  # 対角スケーリング済み
 │   └── *.meta.json
 └── models/                  # 学習済みモデル（オプション）
     └── *.pkl
