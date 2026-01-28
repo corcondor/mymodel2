@@ -205,3 +205,11 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# mymodel2 specific
+cifar10_data/
+feat_cache/
+*.mmap
+*.meta.json
+test_mymodel2.py
+demo_output.txt
