@@ -4,6 +4,8 @@ THEORY3.md — Quantum-Inspired, Integer-First ML Stack for mymodel3
 This note documents a practical, **quantum‑inspired → discrete → integer → tree‑based**
 pipeline aligned with the following architecture:
 
+Author: corcondor
+
 ```
 mymodel3（量子インスパイア）
 ├─ 理論層（量子情報）
