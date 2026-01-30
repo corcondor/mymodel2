@@ -1,0 +1,65 @@
+name: Remote Run (files)
+
+on:
+  workflow_dispatch:
+    inputs:
+      files:
+        description: "Comma-separated Python files in base_dir (e.g., mymodel3.py,test_compression_methods.py)"
+        required: true
+        default: "mymodel3.py"
+      args:
+        description: "Extra args applied to each file"
+        required: false
+        default: ""
+      base_dir:
+        description: "Base directory containing files"
+        required: true
+        default: "/Users/yuta/Library/CloudStorage/OneDrive-東京理科大学/デスクトップ/python"
+      python:
+        description: "Python executable"
+        required: true
+        default: "/Users/yuta/miniforge3/envs/mymodel/bin/python"
+      log_path:
+        description: "Log file path"
+        required: true
+        default: "/tmp/remote_run.log"
+
+jobs:
+  run:
+    runs-on: [self-hosted, mac]
+    steps:
+      - name: Run selected files
+        shell: bash
+        run: |
+          set -euxo pipefail
+          base="${{ inputs.base_dir }}"
+          py="${{ inputs.python }}"
+          log="${{ inputs.log_path }}"
+
+          if [ ! -d "$base" ]; then
+            echo "Missing base_dir: $base" | tee -a "$log"
+            exit 1
+          fi
+          cd "$base"
+          : > "$log"
+          IFS=',' read -ra files <<< "${{ inputs.files }}"
+          for f in "${files[@]}"; do
+            f="$(echo "$f" | xargs)"
+            [ -z "$f" ] && continue
+            path="$base/$f"
+            if [ ! -f "$path" ]; then
+              echo "Missing file: $path" | tee -a "$log"
+              exit 1
+            fi
+            echo "=== RUN $path ${{ inputs.args }} ===" | tee -a "$log"
+            # Intentional word-splitting for args
+            $py -u "$path" ${{ inputs.args }} 2>&1 | tee -a "$log"
+          done
+
+      - name: Upload log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: remote-run-log
+          path: ${{ inputs.log_path }}
+          if-no-files-found: ignore
