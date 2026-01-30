@@ -42,10 +42,42 @@ jobs:
           fi
           cd "$base"
           : > "$log"
-          IFS=',' read -ra files <<< "${{ inputs.files }}"
-          for f in "${files[@]}"; do
-            f="$(echo "$f" | xargs)"
-            [ -z "$f" ] && continue
+          shopt -s nullglob
+          IFS=',' read -ra specs <<< "${{ inputs.files }}"
+          run_list=()
+          for spec in "${specs[@]}"; do
+            spec="$(echo "$spec" | xargs)"
+            [ -z "$spec" ] && continue
+            if [ "$spec" = "ALL" ]; then
+              for f in *.py; do run_list+=("$f"); done
+              continue
+            fi
+            if [[ "$spec" == glob:* ]]; then
+              pat="${spec#glob:}"
+              matches=($pat)
+              if [ ${#matches[@]} -eq 0 ]; then
+                echo "No matches for pattern: $pat" | tee -a "$log"
+                exit 1
+              fi
+              run_list+=("${matches[@]}")
+              continue
+            fi
+            if [[ "$spec" == *"*"* || "$spec" == *"?"* || "$spec" == *"["* ]]; then
+              matches=($spec)
+              if [ ${#matches[@]} -eq 0 ]; then
+                echo "No matches for pattern: $spec" | tee -a "$log"
+                exit 1
+              fi
+              run_list+=("${matches[@]}")
+              continue
+            fi
+            run_list+=("$spec")
+          done
+          if [ ${#run_list[@]} -eq 0 ]; then
+            echo "No files to run. Provide filenames or patterns." | tee -a "$log"
+            exit 1
+          fi
+          for f in "${run_list[@]}"; do
             path="$base/$f"
             if [ ! -f "$path" ]; then
               echo "Missing file: $path" | tee -a "$log"
