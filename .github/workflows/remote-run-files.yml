@@ -3,12 +3,140 @@ name: Remote Run (files)
 on:
   workflow_dispatch:
     inputs:
-      files:
-        description: "Comma-separated Python files in base_dir (e.g., mymodel3.py,test_compression_methods.py)"
+      target1:
+        description: "Select file 1"
         required: true
+        type: choice
         default: "mymodel3.py"
+        options:
+          - "mymodel3.py"
+          - "mymodel.py"
+          - "mymodel2.py"
+          - "mymodel4.py"
+          - "mymodel5.py"
+          - "mymodel5_liveviz_v2.py"
+          - "mymodel6.py"
+          - "feature_grammar_v5_full.py"
+          - "feature_grammar_v5_optimized.py"
+          - "feature_grammar_v4.py"
+          - "feature_grammar_v3.py"
+          - "test_compression_methods.py"
+          - "test_pipeline.py"
+          - "test_d4.py"
+          - "test_cayley.py"
+          - "test_cayley_norm.py"
+          - "test_v5_full.py"
+          - "test_v5_optimized.py"
+          - "test_v5_parallel.py"
+          - "test_grammar_quick.py"
+          - "test_quadratic_lbp.py"
+          - "test_quantum_optimizations.py"
+          - "run_experiments.py"
+          - "quick_test.py"
+          - "debug_features.py"
+          - "debug_model3_investigation.py"
+          - "demonstrate_d4_equivariance.py"
+          - "test_full_scale.py"
+          - "test_data_trees.py"
+          - "test_v4_advanced.py"
+          - "test_v3_quick.py"
+          - "ALL"
+          - "NONE"
+      target2:
+        description: "Select file 2 (optional)"
+        required: true
+        type: choice
+        default: "NONE"
+        options:
+          - "NONE"
+          - "mymodel3.py"
+          - "mymodel.py"
+          - "mymodel2.py"
+          - "mymodel4.py"
+          - "mymodel5.py"
+          - "mymodel5_liveviz_v2.py"
+          - "mymodel6.py"
+          - "feature_grammar_v5_full.py"
+          - "feature_grammar_v5_optimized.py"
+          - "feature_grammar_v4.py"
+          - "feature_grammar_v3.py"
+          - "test_compression_methods.py"
+          - "test_pipeline.py"
+          - "test_d4.py"
+          - "test_cayley.py"
+          - "test_cayley_norm.py"
+          - "test_v5_full.py"
+          - "test_v5_optimized.py"
+          - "test_v5_parallel.py"
+          - "test_grammar_quick.py"
+          - "test_quadratic_lbp.py"
+          - "test_quantum_optimizations.py"
+          - "run_experiments.py"
+          - "quick_test.py"
+          - "debug_features.py"
+          - "debug_model3_investigation.py"
+          - "demonstrate_d4_equivariance.py"
+          - "test_full_scale.py"
+          - "test_data_trees.py"
+          - "test_v4_advanced.py"
+          - "test_v3_quick.py"
+          - "ALL"
+      target3:
+        description: "Select file 3 (optional)"
+        required: true
+        type: choice
+        default: "NONE"
+        options:
+          - "NONE"
+          - "mymodel3.py"
+          - "mymodel.py"
+          - "mymodel2.py"
+          - "mymodel4.py"
+          - "mymodel5.py"
+          - "mymodel5_liveviz_v2.py"
+          - "mymodel6.py"
+          - "feature_grammar_v5_full.py"
+          - "feature_grammar_v5_optimized.py"
+          - "feature_grammar_v4.py"
+          - "feature_grammar_v3.py"
+          - "test_compression_methods.py"
+          - "test_pipeline.py"
+          - "test_d4.py"
+          - "test_cayley.py"
+          - "test_cayley_norm.py"
+          - "test_v5_full.py"
+          - "test_v5_optimized.py"
+          - "test_v5_parallel.py"
+          - "test_grammar_quick.py"
+          - "test_quadratic_lbp.py"
+          - "test_quantum_optimizations.py"
+          - "run_experiments.py"
+          - "quick_test.py"
+          - "debug_features.py"
+          - "debug_model3_investigation.py"
+          - "demonstrate_d4_equivariance.py"
+          - "test_full_scale.py"
+          - "test_data_trees.py"
+          - "test_v4_advanced.py"
+          - "test_v3_quick.py"
+          - "ALL"
+      files:
+        description: "Extra files (comma-separated). Use for any other .py or globs like test_*.py"
+        required: false
+        default: ""
+      args_preset:
+        description: "Args preset (buttons)"
+        required: true
+        type: choice
+        default: "NONE"
+        options:
+          - "NONE"
+          - "mymodel3_lgbm_fast"
+          - "mymodel3_lgbm_full"
+          - "mymodel2_lgbm_fast"
+          - "mymodel2_lgbm_full"
       args:
-        description: "Extra args applied to each file"
+        description: "Extra args appended to preset (optional)"
         required: false
         default: ""
       base_dir:
@@ -42,14 +170,42 @@ jobs:
           fi
           cd "$base"
           : > "$log"
+          preset="${{ inputs.args_preset }}"
+          preset_args=""
+          case "$preset" in
+            NONE) preset_args="";;
+            mymodel3_lgbm_fast) preset_args="--data_root /tmp/cifar10_data --method lightgbm --train_n 50000 --test_n 10000 --bins 4 --use_moments --use_quadratic --normalize --lgbm_n_estimators 500 --lgbm_learning_rate 0.03";;
+            mymodel3_lgbm_full) preset_args="--data_root /tmp/cifar10_data --method lightgbm --train_n 50000 --test_n 10000 --bins 4 --use_moments --use_quadratic --normalize --lgbm_n_estimators 2000 --lgbm_learning_rate 0.03";;
+            mymodel2_lgbm_fast) preset_args="--classifier lightgbm --flip_train --flip_eval --diag_scale --diag_use_var --diag_eps 10 --diag_scale_factor 32 --lgbm_n_estimators 500 --num_workers 8 --cache_dir /tmp/mymodel2_cache";;
+            mymodel2_lgbm_full) preset_args="--classifier lightgbm --flip_train --flip_eval --diag_scale --diag_use_var --diag_eps 10 --diag_scale_factor 32 --lgbm_n_estimators 1000 --num_workers 8 --cache_dir /tmp/mymodel2_cache";;
+            *) echo "Unknown args_preset: $preset" | tee -a "$log"; exit 1;;
+          esac
+          extra_args="${{ inputs.args }}"
           shopt -s nullglob
-          IFS=',' read -ra specs <<< "${{ inputs.files }}"
+          specs=()
+          for t in "${{ inputs.target1 }}" "${{ inputs.target2 }}" "${{ inputs.target3 }}"; do
+            [ "$t" = "NONE" ] && continue
+            specs+=("$t")
+          done
+          if [ -n "${{ inputs.files }}" ]; then
+            IFS=',' read -ra extra <<< "${{ inputs.files }}"
+            specs+=("${extra[@]}")
+          fi
           run_list=()
+          declare -A seen
+          add_one() {
+            local x="$1"
+            [ -z "$x" ] && return
+            if [ -z "${seen[$x]+x}" ]; then
+              run_list+=("$x")
+              seen["$x"]=1
+            fi
+          }
           for spec in "${specs[@]}"; do
             spec="$(echo "$spec" | xargs)"
             [ -z "$spec" ] && continue
             if [ "$spec" = "ALL" ]; then
-              for f in *.py; do run_list+=("$f"); done
+              for f in *.py; do add_one "$f"; done
               continue
             fi
             if [[ "$spec" == glob:* ]]; then
@@ -59,7 +215,7 @@ jobs:
                 echo "No matches for pattern: $pat" | tee -a "$log"
                 exit 1
               fi
-              run_list+=("${matches[@]}")
+              for m in "${matches[@]}"; do add_one "$m"; done
               continue
             fi
             if [[ "$spec" == *"*"* || "$spec" == *"?"* || "$spec" == *"["* ]]; then
@@ -68,10 +224,10 @@ jobs:
                 echo "No matches for pattern: $spec" | tee -a "$log"
                 exit 1
               fi
-              run_list+=("${matches[@]}")
+              for m in "${matches[@]}"; do add_one "$m"; done
               continue
             fi
-            run_list+=("$spec")
+            add_one "$spec"
           done
           if [ ${#run_list[@]} -eq 0 ]; then
             echo "No files to run. Provide filenames or patterns." | tee -a "$log"
@@ -83,9 +239,9 @@ jobs:
               echo "Missing file: $path" | tee -a "$log"
               exit 1
             fi
-            echo "=== RUN $path ${{ inputs.args }} ===" | tee -a "$log"
+            echo "=== RUN $path $preset_args $extra_args ===" | tee -a "$log"
             # Intentional word-splitting for args
-            $py -u "$path" ${{ inputs.args }} 2>&1 | tee -a "$log"
+            $py -u "$path" $preset_args $extra_args 2>&1 | tee -a "$log"
           done
 
       - name: Upload log
