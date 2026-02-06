@@ -14,6 +14,8 @@ import numpy as np
 from scipy.stats import skew, kurtosis
 from scipy.ndimage import convolve
 from joblib import Parallel, delayed
+import argparse
+import warnings
 
 # ========== AST Nodes ==========
 
@@ -59,6 +61,18 @@ class OppYB(ASTNode):
 class Sat(ASTNode):
     img: ASTNode
     def __repr__(self): return f"Sat({self.img})"
+
+@dataclass(frozen=True)
+class Neg(ASTNode):
+    img: ASTNode
+    def __repr__(self): return f"Neg({self.img})"
+
+@dataclass(frozen=True)
+class Grad(ASTNode):
+    img: ASTNode
+    th: int
+    mode: str  # 'dx_pos'|'dx_neg'|'dy_pos'|'dy_neg'
+    def __repr__(self): return f"Grad({self.img},th={self.th},{self.mode})"
 
 @dataclass(frozen=True)
 class Threshold(ASTNode):
@@ -150,38 +164,78 @@ class FullEvaluator:
         
         elif isinstance(node, Gray):
             rgb = self.evaluate(node.img, img)
-            r, g, b = rgb[:,:,0], rgb[:,:,1], rgb[:,:,2]
-            return 0.299 * r + 0.587 * g + 0.114 * b
+            # mymodel2-style integer grayscale (approx ITU-R BT.601)
+            r = rgb[:, :, 0].astype(np.uint16)
+            g = rgb[:, :, 1].astype(np.uint16)
+            b = rgb[:, :, 2].astype(np.uint16)
+            y = (77 * r + 150 * g + 29 * b) >> 8
+            return y.astype(np.float32)
         
         elif isinstance(node, OppRG):
             rgb = self.evaluate(node.img, img)
-            r, g = rgb[:,:,0], rgb[:,:,1]
-            return r - g
+            r = rgb[:, :, 0].astype(np.int16)
+            g = rgb[:, :, 1].astype(np.int16)
+            return (r - g).astype(np.float32)
         
         elif isinstance(node, OppYB):
             rgb = self.evaluate(node.img, img)
-            r, g, b = rgb[:,:,0], rgb[:,:,1], rgb[:,:,2]
-            return (r + g) / 2.0 - b
+            # mymodel2-style: yb = 2*B - R - G
+            r = rgb[:, :, 0].astype(np.int16)
+            g = rgb[:, :, 1].astype(np.int16)
+            b = rgb[:, :, 2].astype(np.int16)
+            return (2 * b - r - g).astype(np.float32)
         
         elif isinstance(node, Sat):
             rgb = self.evaluate(node.img, img)
-            mx = np.max(rgb, axis=2)
-            mn = np.min(rgb, axis=2)
-            delta = mx - mn
-            return np.where(mx > 0, delta / (mx + 1e-9), 0.0)
+            # mymodel2-style saturation proxy: max(R,G,B) - min(R,G,B) in [0..255]
+            r = rgb[:, :, 0].astype(np.int16)
+            g = rgb[:, :, 1].astype(np.int16)
+            b = rgb[:, :, 2].astype(np.int16)
+            mx = np.maximum.reduce([r, g, b])
+            mn = np.minimum.reduce([r, g, b])
+            return (mx - mn).astype(np.float32)
+
+        elif isinstance(node, Neg):
+            ch = self.evaluate(node.img, img)
+            return (-ch).astype(np.float32)
         
         elif isinstance(node, Threshold):
             channel = self.evaluate(node.img, img)
             return (channel > node.thresh).astype(np.uint8)
+
+        elif isinstance(node, Grad):
+            g = self.evaluate(node.img, img).astype(np.int16)
+            th = int(node.th)
+            dx = np.zeros((32, 32), dtype=np.int16)
+            dy = np.zeros((32, 32), dtype=np.int16)
+            dx[:, :-1] = g[:, 1:] - g[:, :-1]
+            dy[:-1, :] = g[1:, :] - g[:-1, :]
+            if node.mode == "dx_pos":
+                return (dx > th).astype(np.uint8)
+            if node.mode == "dx_neg":
+                return (dx < -th).astype(np.uint8)
+            if node.mode == "dy_pos":
+                return (dy > th).astype(np.uint8)
+            if node.mode == "dy_neg":
+                return (dy < -th).astype(np.uint8)
+            raise ValueError(f"Unknown Grad mode: {node.mode}")
         
         elif isinstance(node, Edge):
-            channel = self.evaluate(node.img, img)
-            sobel_x = np.array([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]])
-            sobel_y = np.array([[-1, -2, -1], [0, 0, 0], [1, 2, 1]])
-            gx = convolve(channel, sobel_x, mode='constant')
-            gy = convolve(channel, sobel_y, mode='constant')
-            magnitude = np.sqrt(gx**2 + gy**2)
-            return (magnitude > 50).astype(np.uint8)
+            # mymodel2-style edge map on a binary mask: dilate4 XOR erode4
+            B01 = self.evaluate(node.img, img).astype(np.uint8)
+            up = np.zeros_like(B01); up[1:, :] = B01[:-1, :]
+            dn = np.zeros_like(B01); dn[:-1, :] = B01[1:, :]
+            lf = np.zeros_like(B01); lf[:, 1:] = B01[:, :-1]
+            rt = np.zeros_like(B01); rt[:, :-1] = B01[:, 1:]
+            dil = np.maximum.reduce([B01, up, dn, lf, rt]).astype(np.uint8)
+
+            up = np.ones_like(B01); up[1:, :] = B01[:-1, :]
+            dn = np.ones_like(B01); dn[:-1, :] = B01[1:, :]
+            lf = np.ones_like(B01); lf[:, 1:] = B01[:, :-1]
+            rt = np.ones_like(B01); rt[:, :-1] = B01[:, 1:]
+            ero = np.minimum.reduce([B01, up, dn, lf, rt]).astype(np.uint8)
+
+            return (dil ^ ero).astype(np.uint8)
         
         elif isinstance(node, CA):
             mask = self.evaluate(node.mask, img)
@@ -269,58 +323,52 @@ class FullEvaluator:
     def _grid_stats(self, B01: np.ndarray, grid_n: int) -> np.ndarray:
         h, w = B01.shape
         grid_h, grid_w = h // grid_n, w // grid_n
-        
-        cnt = np.sum(B01) / (h * w)
+
+        # mymodel2-style: use counts (not normalized)
+        B = B01.astype(np.uint16, copy=False)
+        cnt = float(B.sum())
         
         row_proj = []
         for i in range(grid_n):
-            row_sum = np.sum(B01[i*grid_h:(i+1)*grid_h, :])
-            row_proj.append(row_sum / (grid_h * w))
+            row_sum = B[i*grid_h:(i+1)*grid_h, :].sum()
+            row_proj.append(float(row_sum))
         
         col_proj = []
         for j in range(grid_n):
-            col_sum = np.sum(B01[:, j*grid_w:(j+1)*grid_w])
-            col_proj.append(col_sum / (h * grid_w))
+            col_sum = B[:, j*grid_w:(j+1)*grid_w].sum()
+            col_proj.append(float(col_sum))
         
         grid = []
         for i in range(grid_n):
             for j in range(grid_n):
-                cell_sum = np.sum(B01[i*grid_h:(i+1)*grid_h, j*grid_w:(j+1)*grid_w])
-                grid.append(cell_sum / (grid_h * grid_w))
+                cell_sum = B[i*grid_h:(i+1)*grid_h, j*grid_w:(j+1)*grid_w].sum()
+                grid.append(float(cell_sum))
         
         return np.array([cnt] + row_proj + col_proj + grid, dtype=np.float32)
     
     def _pat2x2(self, B01: np.ndarray) -> np.ndarray:
-        h, w = B01.shape
-        counts = np.zeros(16, dtype=np.int32)
-        # Ensure binary 0/1 values (input might be float or non-binary)
-        B01_bin = (B01 > 0.5).astype(np.uint8)
-        
-        for i in range(0, h-1, 2):
-            for j in range(0, w-1, 2):
-                p = (int(B01_bin[i, j]) << 3) | (int(B01_bin[i, j+1]) << 2) | \
-                    (int(B01_bin[i+1, j]) << 1) | int(B01_bin[i+1, j+1])
-                counts[p] += 1
-        
-        total = np.sum(counts)
-        return (counts / (total + 1e-9)).astype(np.float32)
+        # mymodel2-style overlapping 2x2 histogram
+        B = (B01 > 0.5).astype(np.uint8)
+        if B.shape[0] < 2 or B.shape[1] < 2:
+            return np.zeros(16, dtype=np.float32)
+        a = B[:-1, :-1]
+        b = B[:-1, 1:]
+        c = B[1:, :-1]
+        d = B[1:, 1:]
+        code = (a | (b << 1) | (c << 2) | (d << 3)).ravel().astype(np.int32)
+        h = np.bincount(code, minlength=16).astype(np.float32)
+        return h / (h.sum() + 1e-9)
     
     def _markov4(self, B01: np.ndarray) -> np.ndarray:
-        h, w = B01.shape
-        trans = np.zeros((2, 2), dtype=np.int32)
-        # Ensure binary 0/1 values
-        B01_bin = (B01 > 0.5).astype(np.int32)
-        
-        for i in range(h):
-            for j in range(w-1):
-                trans[B01_bin[i,j], B01_bin[i,j+1]] += 1
-        for i in range(h-1):
-            for j in range(w):
-                trans[B01_bin[i,j], B01_bin[i+1,j]] += 1
-        
-        total = np.sum(trans)
-        probs = (trans / (total + 1e-9)).flatten().astype(np.float32)
-        return probs
+        # mymodel2-style Markov transitions in 4 directions, 4 bins each => 16 dims
+        B = (B01 > 0.5).astype(np.uint8)
+        out = []
+        A = B[:, :-1].ravel(); C = B[:, 1:].ravel(); out.append(np.bincount(((A << 1) | C).astype(np.int32), minlength=4))
+        A = B[:-1, :].ravel(); C = B[1:, :].ravel(); out.append(np.bincount(((A << 1) | C).astype(np.int32), minlength=4))
+        A = B[:-1, :-1].ravel(); C = B[1:, 1:].ravel(); out.append(np.bincount(((A << 1) | C).astype(np.int32), minlength=4))
+        A = B[:-1, 1:].ravel(); C = B[1:, :-1].ravel(); out.append(np.bincount(((A << 1) | C).astype(np.int32), minlength=4))
+        h = np.concatenate(out, axis=0).astype(np.float32)
+        return h / (h.sum() + 1e-9)
     
     def _lbp_hist8(self, gray: np.ndarray, eps: int = 0) -> np.ndarray:
         """LBP (Local Binary Pattern) - mymodel2 implementation"""
@@ -377,13 +425,50 @@ if __name__ == "__main__":
     from mymodel3 import load_cifar10_numpy
     from lightgbm import LGBMClassifier
     import time
+
+    parser = argparse.ArgumentParser(description="Feature Grammar V6 (mymodel2-like masks + stats)")
+    parser.add_argument("--data-dir", type=str, default="./cifar10_data")
+    parser.add_argument("--n-jobs", type=int, default=4)
+    parser.add_argument("--subset-train", type=int, default=0, help="0=full, else number of train samples")
+    parser.add_argument("--subset-test", type=int, default=0, help="0=full, else number of test samples")
+    parser.add_argument("--max-programs", type=int, default=0, help="0=all, else use first N programs")
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--quick", action="store_true", help="Run a small stratified subset for a fast sanity check")
+    args = parser.parse_args()
+
+    warnings.filterwarnings("ignore", category=Warning, module=r"mymodel3")
     
     print("=" * 70)
     print("Feature Grammar V6 - LBP + RGB Histograms + Auto-generation")
     print("=" * 70)
+    print(f"Args: {args}\n")
     
-    # Load full data
-    Xtr, ytr, Xte, yte = load_cifar10_numpy("./cifar10_data")
+    if args.quick:
+        args.subset_train = args.subset_train or 5000
+        args.subset_test = args.subset_test or 2000
+        print(f"Quick mode enabled: subset_train={args.subset_train}, subset_test={args.subset_test}")
+
+    # Load data
+    Xtr, ytr, Xte, yte = load_cifar10_numpy(args.data_dir)
+
+    # Optional stratified subsetting
+    if args.subset_train and args.subset_train < len(Xtr):
+        from sklearn.model_selection import train_test_split
+        Xtr, _, ytr, _ = train_test_split(
+            Xtr, ytr,
+            train_size=args.subset_train,
+            random_state=args.seed,
+            stratify=ytr,
+        )
+    if args.subset_test and args.subset_test < len(Xte):
+        from sklearn.model_selection import train_test_split
+        Xte, _, yte, _ = train_test_split(
+            Xte, yte,
+            train_size=args.subset_test,
+            random_state=args.seed,
+            stratify=yte,
+        )
+
     print(f"Dataset: Train={len(Xtr)}, Test={len(Xte)}\n")
     
     evaluator = FullEvaluator()
@@ -391,57 +476,73 @@ if __name__ == "__main__":
     # Auto-generate programs combinatorially
     img = Img()
     
-    # Define channels and operators
-    channels = [
-        ('R', R(img)),
-        ('G', G(img)),
-        ('B', B(img)),
-        ('Gray', Gray(img)),
-        ('OppRG', OppRG(img)),
-        ('OppYB', OppYB(img)),
-        ('Sat', Sat(img))
-    ]
-    
-    thresholds = [60, 100, 140, 180]
+    # Build mymodel2-like binary masks, then apply per-mask statistics.
+    # Key fix: thresholds must match channel scales (gray 0..255, rg ~[-255..255], yb ~[-510..510], sat 0..255)
+    g = Gray(img)
+    rg = OppRG(img)
+    yb = OppYB(img)
+    sat = Sat(img)
+
+    gray_thresholds = [60, 100, 140, 180]
+    rg_tpos = [20, 50, 80]
+    yb_tpos = [20, 50, 80]      # mymodel2 uses 2*th for yb
+    sat_th = [30, 60, 90]
+    grad_th = 12
+
+    masks = []
+    # gray masks + edges
+    for th in gray_thresholds:
+        m = Threshold(g, th)
+        masks.append(m)
+        masks.append(Edge(m))
+
+    # grad direction masks (4 dirs)
+    masks.append(Grad(g, grad_th, "dx_pos"))
+    masks.append(Grad(g, grad_th, "dx_neg"))
+    masks.append(Grad(g, grad_th, "dy_pos"))
+    masks.append(Grad(g, grad_th, "dy_neg"))
+
+    # opponent masks (pos/neg)
+    for th in rg_tpos:
+        masks.append(Threshold(rg, th))
+        masks.append(Threshold(Neg(rg), th))
+    for th in yb_tpos:
+        t2 = 2 * th
+        masks.append(Threshold(yb, t2))
+        masks.append(Threshold(Neg(yb), t2))
+
+    # saturation masks
+    for th in sat_th:
+        masks.append(Threshold(sat, th))
+
+    # per-mask statistics (mymodel2-style core)
     stats_ops = [
-        ('GridStats', lambda x: GridStats(x, grid_n=8)),
-        ('Pat2x2', Pat2x2),
-        ('Markov4', Markov4),
-        ('Moments', Moments)
+        ("GridStats", lambda x: GridStats(x, grid_n=8)),
+        ("Pat2x2", Pat2x2),
+        ("Markov4", Markov4),
     ]
-    
+
     programs = []
-    
-    # 1. Thresholded features (channel × threshold × stat)
-    for ch_name, ch in channels:
-        for th in thresholds:
-            for stat_name, stat_fn in stats_ops:
-                programs.append(stat_fn(Threshold(ch, th)))
-    
-    # 2. Edge features (channel × stat)
-    for ch_name, ch in channels:
-        for stat_name, stat_fn in stats_ops:
-            programs.append(stat_fn(Edge(ch)))
-    
-    # 3. Direct channel statistics (channel × stat)
-    for ch_name, ch in channels:
-        for stat_name, stat_fn in stats_ops:
-            programs.append(stat_fn(ch))
-    
-    # 4. Add mymodel2-style features
-    programs.append(LBP(Gray(img), eps=0))       # 256 dims
-    programs.append(RGBHist(img, bins=4))        # 64 dims (4^3)
-    programs.append(RGBBlocks(img, blocks=4))    # 48 dims (4×4×3)
-    
+    for m in masks:
+        for _, stat_fn in stats_ops:
+            programs.append(stat_fn(m))
+
+    # Add mymodel2-style global features
+    programs.append(LBP(g, eps=0))               # 256 dims
+    programs.append(RGBHist(img, bins=4))        # 64 dims
+    programs.append(RGBBlocks(img, blocks=4))    # 48 dims
+
+    if args.max_programs and args.max_programs < len(programs):
+        programs = programs[: args.max_programs]
+
     print(f"Using {len(programs)} auto-generated feature programs\n")
-    print(f"  Combinatorial: 7 channels × 4 thresholds × 4 stats = {7*4*4} programs")
-    print(f"  Edge features: 7 channels × 4 stats = {7*4} programs")
-    print(f"  Direct stats:  7 channels × 4 stats = {7*4} programs")
-    print(f"  mymodel2 features: LBP (256d) + RGBHist (64d) + RGBBlocks (48d)")
+    print(f"  Masks: {len(masks)} (gray+edge={2*len(gray_thresholds)}, grad=4, rg=2*{len(rg_tpos)}, yb=2*{len(yb_tpos)}, sat={len(sat_th)})")
+    print(f"  Per-mask stats: {len(stats_ops)} => {len(masks)}×{len(stats_ops)} = {len(masks)*len(stats_ops)} programs")
+    print(f"  mymodel2 features: LBP (256d) + RGBHist (64d) + RGBBlocks (48d) = 3 programs")
     print(f"  Total: {len(programs)} programs\n")
     
     # Extract features with parallelization
-    print("Extracting features from 50k training samples (parallel, n_jobs=4)...")
+    print(f"Extracting features from {len(Xtr)} training samples (parallel, n_jobs={args.n_jobs})...")
     start_time = time.time()
     
     def extract_program(prog_idx, prog):
@@ -450,8 +551,8 @@ if __name__ == "__main__":
         feats_te = np.array([evaluator.evaluate(prog, img) for img in Xte])
         return feats_tr, feats_te
     
-    # Parallel extraction (n_jobs=4)
-    results = Parallel(n_jobs=4, verbose=10)(
+    # Parallel extraction
+    results = Parallel(n_jobs=args.n_jobs, verbose=10)(
         delayed(extract_program)(i, prog) for i, prog in enumerate(programs)
     )
     
@@ -482,15 +583,32 @@ if __name__ == "__main__":
     print(f"  Val:   {len(y_val)} samples")
     
     # Train with early stopping (AUTO tree count)
-    print(f"\nTraining LightGBM with Early Stopping...")
-    print(f"  Max estimators: 5000 (will stop early)")
-    print(f"  Stopping rounds: 100")
+    print(f"\nTraining LightGBM with Early Stopping + Auto-Regularization...")
+
+    max_estimators = 1000 if args.quick else 5000  # Reduce max_estimators for quick mode
+    stopping_rounds = 100 if args.quick else 200   # Reduce patience for quick mode
+
+    print(f"  Max estimators: {max_estimators} (will stop early)")
+    print(f"  Stopping rounds: {stopping_rounds}")
+    print(f"  Max depth: 6 (reduced from 8 to prevent overfitting)")
+    print(f"  Num leaves: 63 (reduced from 255)")
+    print(f"  Auto-regularization parameters:")
+    print(f"    subsample=0.8 (use 80% random samples per tree)")
+    print(f"    colsample_bytree=0.8 (use 80% random features per tree)")
+    print(f"    min_child_samples=20 (min 20 samples per leaf)")
+    print(f"    reg_lambda=1.0 (L2 regularization)")
     
     clf = LGBMClassifier(
-        n_estimators=5000,  # Large number, will stop early
-        max_depth=8,
-        num_leaves=255,
+        n_estimators=max_estimators,  # Large number, will stop early
+        max_depth=6,        # Reduced from 8 to prevent overfitting
+        num_leaves=63,      # Reduced from 255 (2^6-1)
         learning_rate=0.1,  # Default (faster convergence with early stopping)
+        # Auto-regularization to prevent overfitting (no manual tuning needed)
+        subsample=0.8,            # Random 80% samples per tree
+        colsample_bytree=0.8,     # Random 80% features per tree  
+        min_child_samples=20,     # Min 20 samples per leaf (avoid tiny leaves)
+        reg_lambda=1.0,           # L2 regularization (default but explicit)
+        n_jobs=args.n_jobs,
         random_state=42,
         verbose=-1  # Suppress output
     )
@@ -499,7 +617,7 @@ if __name__ == "__main__":
     clf.fit(
         X_train, y_train,
         eval_set=[(X_val, y_val)],
-        callbacks=[lgb.early_stopping(stopping_rounds=100, verbose=False)]
+        callbacks=[lgb.early_stopping(stopping_rounds=stopping_rounds, verbose=False)]
     )
     train_time = time.time() - train_start
     
@@ -521,7 +639,7 @@ if __name__ == "__main__":
     print(f"  Val Accuracy:       {acc_val*100:.2f}%")
     print(f"  Test Accuracy:      {acc_test*100:.2f}%")
     print(f"  Train-Test Gap:     {(acc_train - acc_test)*100:.2f}%")
-    print(f"  Trees Used:         {trees_used} (stopped early from 5000)")
+    print(f"  Trees Used:         {trees_used} (stopped early from {max_estimators})")
     print(f"  Feature Dims:       {feats_train.shape[1]}")
     print(f"  Programs:           {len(programs)}")
     print(f"  Train Size:         {len(Xtr)}")
